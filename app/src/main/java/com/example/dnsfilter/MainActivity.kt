@@ -55,7 +55,8 @@ class MainActivity : AppCompatActivity() {
         val savedExcluded = prefs.getStringSet("excluded_apps", emptySet())?.toMutableSet() ?: mutableSetOf()
 
         val pm = packageManager
-        // Ищем ВСЕ приложения, у которых есть доступ к интернету (включая Chrome)
+        
+        // Загружаем приложения, у которых есть доступ в интернет (включая Chrome)
         allAppsList = pm.getInstalledApplications(0)
             .filter { pm.checkPermission(android.Manifest.permission.INTERNET, it.packageName) == PackageManager.PERMISSION_GRANTED }
             .map {
@@ -71,15 +72,17 @@ class MainActivity : AppCompatActivity() {
         recyclerView.layoutManager = LinearLayoutManager(this)
         
         adapter = AppsAdapter(allAppsList) { appItem, isChecked ->
-            if (isChecked) savedExcluded.add(appItem.packageName) 
-            else savedExcluded.remove(appItem.packageName)
-            
+            if (isChecked) {
+                savedExcluded.add(appItem.packageName)
+            } else {
+                savedExcluded.remove(appItem.packageName)
+            }
             prefs.edit().putStringSet("excluded_apps", savedExcluded).apply()
             Toast.makeText(this, "Перезапустите фильтр для применения", Toast.LENGTH_SHORT).show()
         }
         recyclerView.adapter = adapter
 
-        // Логика поиска
+        // Поиск по списку
         searchBar.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -110,7 +113,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Логика цветов кнопок
     private fun updateButtonStates(isRunning: Boolean) {
         if (isRunning) {
             btnStart.isEnabled = false
