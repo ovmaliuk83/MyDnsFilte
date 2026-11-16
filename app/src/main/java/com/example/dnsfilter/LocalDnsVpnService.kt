@@ -56,13 +56,17 @@ class LocalDnsVpnService : VpnService() {
         blockedDomains.add("ad.mail.ru")
     }
 
-    private fun startVpn() {
-        val builder = Builder()
+    val builder = Builder()
             .setSession("MyLocalDnsFilter")
+            // Настройки IPv4
             .addAddress("10.0.0.2", 32)
             .addDnsServer("10.0.0.1")
             .addRoute("10.0.0.1", 32)
-
+            // Настройки IPv6 (перехватываем и его тоже)
+            .addAddress("fd00::1", 128)
+            .addDnsServer("fd00::2")
+            .addRoute("fd00::2", 128)
+            
         val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
         val excludedPackages = prefs.getStringSet("excluded_apps", emptySet()) ?: emptySet()
 
