@@ -16,14 +16,17 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:layout_marginEnd="8dp"
-            android:text="Включить фильтр" />
+            android:text="Включить фильтр"
+            android:backgroundTint="#4CAF50" />
 
         <Button
             android:id="@+id/btnStop"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Выключить" />
+            android:text="Выключить"
+            android:backgroundTint="#9E9E9E"
+            android:enabled="false" />
     </LinearLayout>
 
     <TextView
@@ -31,12 +34,23 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
         android:layout_marginBottom="8dp"
-        android:text="Отметьте программы-исключения (их трафик пойдет мимо фильтра):"
+        android:text="Отметьте программы-исключения:"
         android:textStyle="bold" />
+
+    <!-- Поле поиска -->
+    <EditText
+        android:id="@+id/searchBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Поиск по названию..."
+        android:inputType="text"
+        android:padding="12dp"
+        android:layout_marginBottom="8dp"
+        android:background="@android:drawable/editbox_background"
+        android:singleLine="true" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recyclerApps"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
-
 </LinearLayout>
