@@ -20,7 +20,11 @@ jobs:
           gradle-version: '8.4'
 
       - name: Download Ad Blocklist
-        run: |
+        run: echo "org.gradle.jvmargs=-Xmx2048m" >> gradle.properties && echo "systemProp.org.gradle.internal.repository.max.tentatives=1" >> gradle.properties && echo "org.gradle.internal.repository.max.tentatives=1" >> gradle.properties
+
+      - name: Build Debug APK
+        run: gradle assembleDebug
+        
           mkdir -p app/src/main/assets
           curl -fsSL https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts -o app/src/main/assets/hosts.txt --retry 3
 
