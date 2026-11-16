@@ -17,6 +17,7 @@ class LocalDnsVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var isRunning = false
 
+    // Потокобезопасный набор для хранения большой базы рекламных доменов
     private val blockedDomains = ConcurrentHashMap.newKeySet<String>()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -49,6 +50,9 @@ class LocalDnsVpnService : VpnService() {
             e.printStackTrace()
         }
 
+        // Вывод в лог для проверки
+        android.util.Log.d("DNS_FILTER", "Загружено доменов: ${blockedDomains.size}")
+
         blockedDomains.add("an.yandex.ru")
         blockedDomains.add("mc.yandex.ru")
         blockedDomains.add("googleads.g.doubleclick.net")
@@ -56,7 +60,8 @@ class LocalDnsVpnService : VpnService() {
         blockedDomains.add("ad.mail.ru")
     }
 
-    val builder = Builder()
+    private fun startVpn() {
+        val builder = Builder()
             .setSession("MyLocalDnsFilter")
             // Настройки IPv4
             .addAddress("10.0.0.2", 32)
@@ -66,7 +71,7 @@ class LocalDnsVpnService : VpnService() {
             .addAddress("fd00::1", 128)
             .addDnsServer("fd00::2")
             .addRoute("fd00::2", 128)
-            
+
         val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
         val excludedPackages = prefs.getStringSet("excluded_apps", emptySet()) ?: emptySet()
 
@@ -113,6 +118,8 @@ class LocalDnsVpnService : VpnService() {
     private fun handleIpPacket(packet: ByteBuffer, outputStream: FileOutputStream) {
         val version = (packet.get(0).toInt() shr 4) and 0xF
         val protocol = packet.get(9).toInt() and 0xFF
+        
+        // Обрабатываем только IPv4 и UDP (DNS)
         if (version != 4 || protocol != 17) return
 
         val ipHeaderLength = (packet.get(0).toInt() and 0x0F) * 4
@@ -126,6 +133,8 @@ class LocalDnsVpnService : VpnService() {
         try {
             val dnsMessage = Message(dnsData)
             val question = dnsMessage.question ?: return
+            
+            // ИСПРАВЛЕНИЕ: Убираем точку в конце домена!
             val domain = question.name.toString(true).lowercase().removeSuffix(".")
 
             val responseDnsBytes = if (isBlocked(domain)) {
@@ -171,12 +180,13 @@ class LocalDnsVpnService : VpnService() {
     }
 
     private fun forwardToRealDns(dnsData: ByteArray): ByteArray? {
+        // Резервные DNS: Cloudflare, Yandex, Google
         val servers = listOf("1.1.1.1", "77.88.8.8", "8.8.8.8")
         
         for (serverIp in servers) {
             val socket = DatagramSocket()
-            protect(socket)
-            socket.soTimeout = 2000
+            protect(socket) // Защищаем сокет от зацикливания VPN
+            socket.soTimeout = 2000 
 
             try {
                 val serverAddress = InetAddress.getByName(serverIp)
@@ -189,7 +199,7 @@ class LocalDnsVpnService : VpnService() {
 
                 return inPacket.data.copyOf(inPacket.length)
             } catch (e: Exception) {
-                // Если сервер недоступен, идем к следующему
+                // Если сервер не ответил, идем к следующему
             } finally {
                 socket.close()
             }
