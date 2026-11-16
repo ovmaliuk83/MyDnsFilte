@@ -122,7 +122,7 @@ class LocalDnsVpnService : VpnService() {
         try {
             val dnsMessage = Message(dnsData)
             val question = dnsMessage.question ?: return
-            val domain = question.name.toString(true).lowercase()
+            val domain = question.name.toString(true).lowercase().removeSuffix(".")
 
             val responseDnsBytes = if (isBlocked(domain)) {
                 createBlockedResponse(dnsMessage)
