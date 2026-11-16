@@ -22,15 +22,13 @@ jobs:
       - name: Download Ad Blocklist
         run: |
           mkdir -p app/src/main/assets
-          # Добавлен флаг -f, чтобы сборка падала при ошибке скачивания
           curl -fsSL https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts -o app/src/main/assets/hosts.txt --retry 3
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
+      # ШАГ С CHMOD МЫ УБРАЛИ
+      
       - name: Build Debug APK
-        # Используем локальный gradlew
-        run: ./gradlew assembleDebug
+        # ИСПОЛЬЗУЕМ ГЛОБАЛЬНЫЙ GRADLE ВМЕСТО ./gradlew
+        run: gradle assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
