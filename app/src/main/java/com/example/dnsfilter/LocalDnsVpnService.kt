@@ -140,8 +140,9 @@ class LocalDnsVpnService : VpnService() {
 
     private fun isBlocked(domain: String): Boolean {
         var current = domain
-        while (current.contains(".")) {
+        while (true) {
             if (blockedDomains.contains(current)) return true
+            if (!current.contains(".")) break
             current = current.substringAfter(".")
         }
         return false
