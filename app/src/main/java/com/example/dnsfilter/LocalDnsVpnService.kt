@@ -10,20 +10,15 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.nio.ByteBuffer
+import java.util.concurrent.ConcurrentHashMap
 
 class LocalDnsVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var isRunning = false
 
-    // Минимальный черный список для теста (сюда потом можно загрузить большой файл)
-    private val blockedDomains = hashSetOf(
-        "an.yandex.ru",
-        "mc.yandex.ru",
-        "googleads.g.doubleclick.net",
-        "://googlesyndication.com",
-        "ad.mail.ru"
-    )
+    // Потокобезопасный набор для хранения большой базы рекламных доменов
+    private val blockedDomains = ConcurrentHashMap.newKeySet<String>()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "STOP") {
@@ -37,12 +32,40 @@ class LocalDnsVpnService : VpnService() {
         return START_STICKY
     }
 
+    private fun loadBlocklistFromAssets() {
+        try {
+            assets.open("hosts.txt").bufferedReader().useLines { lines ->
+                lines.forEach { rawLine ->
+                    // Убираем комментарии после # и лишние пробелы
+                    val line = rawLine.substringBefore("#").trim()
+                    if (line.isNotEmpty()) {
+                        val parts = line.split(Regex("\\s+"))
+                        // В файле hosts формат: "0.0.0.0 ://example.com" -> берем второй элемент
+                        val domain = if (parts.size >= 2) parts[1] else parts[0]
+                        if (domain != "localhost" && domain != "0.0.0.0" && domain.contains(".")) {
+                            blockedDomains.add(domain.lowercase())
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // Резервные базовые домены (сработают, даже если файл hosts.txt не загрузился)
+        blockedDomains.add("an.yandex.ru")
+        blockedDomains.add("mc.yandex.ru")
+        blockedDomains.add("googleads.g.doubleclick.net")
+        blockedDomains.add("://googlesyndication.com")
+        blockedDomains.add("ad.mail.ru")
+    }
+
     private fun startVpn() {
         val builder = Builder()
             .setSession("MyLocalDnsFilter")
             .addAddress("10.0.0.2", 32)
             .addDnsServer("10.0.0.1")
-            .addRoute("10.0.0.1", 32) // Перехватываем ТОЛЬКО запросы к нашему фиктивному DNS
+            .addRoute("10.0.0.1", 32)
 
         // Читаем список исключений, который пользователь отметил в интерфейсе
         val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
@@ -59,7 +82,13 @@ class LocalDnsVpnService : VpnService() {
         vpnInterface = builder.establish()
         isRunning = true
 
-        Thread { runPacketLoop() }.start()
+        // Загружаем базу и запускаем цикл обработки пакетов в фоновом потоке
+        Thread {
+            if (blockedDomains.isEmpty()) {
+                loadBlocklistFromAssets()
+            }
+            runPacketLoop()
+        }.start()
     }
 
     private fun runPacketLoop() {
@@ -84,7 +113,6 @@ class LocalDnsVpnService : VpnService() {
     }
 
     private fun handleIpPacket(packet: ByteBuffer, outputStream: FileOutputStream) {
-        // Проверяем, что это IPv4 (версия 4) и протокол UDP (17)
         val version = (packet.get(0).toInt() shr 4) and 0xF
         val protocol = packet.get(9).toInt() and 0xFF
         if (version != 4 || protocol != 17) return
@@ -93,7 +121,6 @@ class LocalDnsVpnService : VpnService() {
         val udpHeaderLength = 8
         val totalHeaderLength = ipHeaderLength + udpHeaderLength
 
-        // Извлекаем полезную нагрузку (сам DNS-запрос)
         val dnsData = ByteArray(packet.limit() - totalHeaderLength)
         packet.position(totalHeaderLength)
         packet.get(dnsData)
@@ -101,7 +128,6 @@ class LocalDnsVpnService : VpnService() {
         try {
             val dnsMessage = Message(dnsData)
             val question = dnsMessage.question ?: return
-            // Убираем точку на конце домена (например, "ads.com." -> "ads.com")
             val domain = question.name.toString(true).lowercase()
 
             val responseDnsBytes = if (isBlocked(domain)) {
@@ -110,7 +136,6 @@ class LocalDnsVpnService : VpnService() {
                 forwardToRealDns(dnsData)
             } ?: return
 
-            // Собираем обратный IP/UDP пакет и отдаем системе
             val responsePacket = buildResponsePacket(packet, ipHeaderLength, responseDnsBytes)
             outputStream.write(responsePacket)
 
@@ -120,7 +145,6 @@ class LocalDnsVpnService : VpnService() {
     }
 
     private fun isBlocked(domain: String): Boolean {
-        // Проверяем точное совпадение и поддомены
         var current = domain
         while (current.contains(".")) {
             if (blockedDomains.contains(current)) return true
@@ -131,11 +155,10 @@ class LocalDnsVpnService : VpnService() {
 
     private fun createBlockedResponse(request: Message): ByteArray {
         val response = Message(request.header.id)
-        response.header.setFlag(Flags.QR.toInt()) // Это ответ
+        response.header.setFlag(Flags.QR.toInt())
         response.header.setFlag(Flags.RA.toInt())
         response.addRecord(request.question, Section.QUESTION)
 
-        // Возвращаем пустой IP 0.0.0.0 для A-запросов
         if (request.question.type == Type.A) {
             val answer = ARecord(
                 request.question.name,
@@ -150,7 +173,6 @@ class LocalDnsVpnService : VpnService() {
 
     private fun forwardToRealDns(dnsData: ByteArray): ByteArray? {
         val socket = DatagramSocket()
-        // КРИТИЧНО: защищаем сокет, чтобы запрос не попал обратно в наш же VPN
         protect(socket)
         socket.soTimeout = 3000
 
@@ -179,31 +201,27 @@ class LocalDnsVpnService : VpnService() {
         val totalLen = ipHeaderLen + 8 + dnsPayload.size
         val out = ByteBuffer.allocate(totalLen)
 
-        // Копируем оригинальный IP-заголовок и меняем местами IP отправителя и получателя
         val ipHeader = ByteArray(ipHeaderLen)
         requestPacket.position(0)
         requestPacket.get(ipHeader)
         out.put(ipHeader)
 
-        out.putShort(2, totalLen.toShort()) // Новая общая длина
-        // Меняем IP местами (байты 12..15 и 16..19)
+        out.putShort(2, totalLen.toShort())
         for (i in 0..3) {
             out.put(12 + i, ipHeader[16 + i])
             out.put(16 + i, ipHeader[12 + i])
         }
-        out.putShort(10, 0) // Сбрасываем контрольную сумму перед пересчетом
+        out.putShort(10, 0)
         out.putShort(10, calculateChecksum(out.array(), 0, ipHeaderLen))
 
-        // Формируем UDP-заголовок (меняем порты местами)
         val srcPort = requestPacket.getShort(ipHeaderLen)
         val dstPort = requestPacket.getShort(ipHeaderLen + 2)
         out.position(ipHeaderLen)
         out.putShort(dstPort)
         out.putShort(srcPort)
         out.putShort((8 + dnsPayload.size).toShort())
-        out.putShort(0) // Контрольная сумма UDP для IPv4 необязательна (0)
+        out.putShort(0)
 
-        // Добавляем сам DNS-ответ
         out.put(dnsPayload)
         return out.array()
     }
