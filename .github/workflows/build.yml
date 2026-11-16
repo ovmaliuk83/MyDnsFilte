@@ -14,6 +14,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.4'
+      - name: Download Ad Blocklist
+        run: |
+          mkdir -p app/src/main/assets
+          curl -sL https://githubusercontent.com -o app/src/main/assets/hosts.txt
       - name: Build Debug APK
         run: gradle assembleDebug
       - name: Upload APK
