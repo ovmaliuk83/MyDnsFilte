@@ -22,6 +22,16 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/versions/9/module-info.class",
+                "META-INF/INDEX.LIST",
+                "META-INF/DEPENDENCIES"
+            )
+        }
+    }
 }
 
 dependencies {
