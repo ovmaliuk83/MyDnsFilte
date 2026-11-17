@@ -67,8 +67,8 @@ class MainActivity : AppCompatActivity() {
         val tvStats = findViewById<TextView>(R.id.tvStats)
 
         // Показываем сохраненный счетчик при запуске
-        val prefsStats = getSharedPreferences("dns_prefs", MODE_PRIVATE)
-        tvStats.text = "Блокировка системного DNS (DoT): ${prefsStats.getInt("dot_blocked_count", 0)}"
+        //val prefsStats = getSharedPreferences("dns_prefs", MODE_PRIVATE)
+        //tvStats.text = "Блокировка системного DNS (DoT): ${prefsStats.getInt("dot_blocked_count", 0)}"
 
         val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
         val savedExcluded = prefs.getStringSet("excluded_apps", emptySet())?.toMutableSet() ?: mutableSetOf()
@@ -153,7 +153,13 @@ class MainActivity : AppCompatActivity() {
             btnStop.backgroundTintList = ColorStateList.valueOf(Color.GRAY)
         }
     }
-
+ override fun onResume() {
+        super.onResume()
+        // Каждый раз при возврате в приложение обновляем счетчик из памяти
+        val prefsStats = getSharedPreferences("dns_prefs", MODE_PRIVATE)
+        val currentCount = prefsStats.getInt("dot_blocked_count", 0)
+        findViewById<TextView>(R.id.tvStats).text = "Блокировка системного DNS (DoT): $currentCount"
+    }
     override fun onDestroy() {
         super.onDestroy()
         try {
