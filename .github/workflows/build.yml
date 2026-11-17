@@ -19,10 +19,19 @@ jobs:
         with:
           gradle-version: '8.4'
 
-      - name: Download Ad Blocklist
+      - name: Download Ad Blocklists
         run: |
           mkdir -p app/src/main/assets
-          curl -fsSL https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.txt -o app/src/main/assets/hosts.txt --retry 3
+          echo "Скачиваем список 1 (StevenBlack)..."
+          curl -fsSL https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts -o list1.txt --retry 3
+          
+          echo "Скачиваем список 2 (GoodbyeAds)..."
+          curl -fsSL https://raw.githubusercontent.com/jerryn70/GoodbyeAds/master/Hosts/GoodbyeAds.txt -o list2.txt --retry 3
+          
+          echo "Объединяем списки..."
+          # Склеиваем файлы в один и удаляем временные
+          cat list1.txt list2.txt > app/src/main/assets/hosts.txt
+          rm list1.txt list2.txt
       - name: Configure Gradle Mirror
         run: |
           echo "org.gradle.jvmargs=-Xmx2048m" >> gradle.properties
