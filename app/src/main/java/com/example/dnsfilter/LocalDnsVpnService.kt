@@ -53,22 +53,36 @@ class LocalDnsVpnService : VpnService() {
         // Вывод в лог для проверки (adb logcat -s DNS_FILTER)
         android.util.Log.d("DNS_FILTER", "Загружено доменов: ${blockedDomains.size}")
 
-        // Резервные домены
+        // Резервные домены (на случай, если файл hosts не загрузился)
         blockedDomains.add("an.yandex.ru")
         blockedDomains.add("mc.yandex.ru")
         blockedDomains.add("googleads.g.doubleclick.net")
         blockedDomains.add("googlesyndication.com")
         blockedDomains.add("ad.mail.ru")
+        
+        // Блокируем известные DoH-серверы (чтобы браузеры не обходили VPN)
+        blockedDomains.add("dns.google")
+        blockedDomains.add("mozilla.cloudflare-dns.com")
+        blockedDomains.add("dns.adguard.com")
+        blockedDomains.add("chrome.cloudflare-dns.com")
     }
 
     private fun startVpn() {
-        // ВНИМАНИЕ: Настройки IPv6 убраны! 
-        // Это заставит телефон использовать только IPv4, чтобы фильтр видел весь трафик.
+        // Настройки VPN. Используем только IPv4, чтобы весь трафик шел через нас.
         val builder = Builder()
             .setSession("MyLocalDnsFilter")
             .addAddress("10.0.0.2", 32)
             .addDnsServer("10.0.0.1")
             .addRoute("10.0.0.1", 32)
+            
+            // ПЕРЕХВАТЫВАЕМ ИЗВЕСТНЫЕ DNS-СЕРВЕРЫ:
+            // Это заставит телефон отправлять запросы к ним через наш VPN,
+            // где мы сможем заблокировать их попытки установить DoT (порт 853).
+            .addRoute("8.8.8.8", 32)   // Google DNS
+            .addRoute("8.8.4.4", 32)   // Google DNS alt
+            .addRoute("1.1.1.1", 32)   // Cloudflare
+            .addRoute("1.0.0.1", 32)   // Cloudflare alt
+            .addRoute("9.9.9.9", 32)   // Quad9
 
         val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
         val excludedPackages = prefs.getStringSet("excluded_apps", emptySet()) ?: emptySet()
@@ -115,12 +129,33 @@ class LocalDnsVpnService : VpnService() {
 
     private fun handleIpPacket(packet: ByteBuffer, outputStream: FileOutputStream) {
         val version = (packet.get(0).toInt() shr 4) and 0xF
-        val protocol = packet.get(9).toInt() and 0xFF
-        
-        // Обрабатываем только IPv4 и UDP (DNS)
-        if (version != 4 || protocol != 17) return
+        if (version != 4) return // Обрабатываем только IPv4
 
         val ipHeaderLength = (packet.get(0).toInt() and 0x0F) * 4
+        val protocol = packet.get(9).toInt() and 0xFF
+        
+        // Определяем IP назначения для логов
+        val destIp = "${packet.get(16).toInt() and 0xFF}.${packet.get(17).toInt() and 0xFF}.${packet.get(18).toInt() and 0xFF}.${packet.get(19).toInt() and 0xFF}"
+
+        // 1. БЛОКИРУЕМ PRIVATE DNS (DoT)
+        // Если это TCP-пакет (protocol 6) и он идет на 853 порт — просто обрываем его.
+        // Система не сможет установить защищенное соединение и переключится на обычный DNS.
+        if (protocol == 6) {
+            val destPort = packet.getShort(ipHeaderLength + 2).toInt() and 0xFFFF
+            if (destPort == 853) {
+                android.util.Log.d("DNS_FILTER", "Заблокирован Private DNS (DoT) на $destIp")
+                return 
+            }
+            // Остальной TCP-трафик мы сейчас не обрабатываем (пропускаем)
+            return 
+        }
+
+        // 2. ОБРАБАТЫВАЕМ ОБЫЧНЫЙ DNS (UDP)
+        if (protocol != 17) return // Обрабатываем только UDP
+        
+        val destPort = packet.getShort(ipHeaderLength + 2).toInt() and 0xFFFF
+        if (destPort != 53) return // Нас интересует только 53 порт (DNS)
+
         val udpHeaderLength = 8
         val totalHeaderLength = ipHeaderLength + udpHeaderLength
 
