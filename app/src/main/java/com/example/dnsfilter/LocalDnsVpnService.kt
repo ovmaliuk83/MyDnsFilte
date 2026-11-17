@@ -33,34 +33,40 @@ class LocalDnsVpnService : VpnService() {
     }
 
     private fun loadBlocklistFromAssets() {
-        try {
-            assets.open("hosts.txt").bufferedReader().useLines { lines ->
-                lines.forEach { rawLine ->
-                    val line = rawLine.substringBefore("#").trim()
-                    if (line.isNotEmpty()) {
-                        val parts = line.split(Regex("\\s+"))
-                        val domain = if (parts.size >= 2) parts[1] else parts[0]
-                        if (domain != "localhost" && domain != "0.0.0.0" && domain.contains(".")) {
-                            blockedDomains.add(domain.lowercase())
+        // Список файлов, которые нужно прочитать
+        val filesToLoad = listOf("hosts_sb.txt", "hosts_goodbye.txt")
+
+        for (fileName in filesToLoad) {
+            try {
+                assets.open(fileName).bufferedReader().useLines { lines ->
+                    lines.forEach { rawLine ->
+                        val line = rawLine.substringBefore("#").trim()
+                        if (line.isNotEmpty()) {
+                            val parts = line.split(Regex("\\s+"))
+                            val domain = if (parts.size >= 2) parts[1] else parts[0]
+                            if (domain != "localhost" && domain != "0.0.0.0" && domain.contains(".")) {
+                                blockedDomains.add(domain.lowercase())
+                            }
                         }
                     }
                 }
+                android.util.Log.d("DNS_FILTER", "Файл $fileName успешно загружен")
+            } catch (e: Exception) {
+                android.util.Log.e("DNS_FILTER", "Ошибка чтения файла $fileName: ${e.message}")
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
 
-        // Вывод в лог для проверки (adb logcat -s DNS_FILTER)
-        android.util.Log.d("DNS_FILTER", "Загружено доменов: ${blockedDomains.size}")
+        // Вывод в лог общего количества
+        android.util.Log.d("DNS_FILTER", "ИТОГО загружено доменов: ${blockedDomains.size}")
 
-        // Резервные домены (на случай, если файл hosts не загрузился)
+        // Резервные домены
         blockedDomains.add("an.yandex.ru")
         blockedDomains.add("mc.yandex.ru")
         blockedDomains.add("googleads.g.doubleclick.net")
         blockedDomains.add("googlesyndication.com")
         blockedDomains.add("ad.mail.ru")
         
-        // Блокируем известные DoH-серверы (чтобы браузеры не обходили VPN)
+        // Блокируем DoH серверы
         blockedDomains.add("dns.google")
         blockedDomains.add("mozilla.cloudflare-dns.com")
         blockedDomains.add("dns.adguard.com")
