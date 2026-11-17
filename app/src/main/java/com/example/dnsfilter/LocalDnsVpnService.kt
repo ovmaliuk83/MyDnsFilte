@@ -140,14 +140,27 @@ class LocalDnsVpnService : VpnService() {
         // 1. БЛОКИРУЕМ PRIVATE DNS (DoT)
         // Если это TCP-пакет (protocol 6) и он идет на 853 порт — просто обрываем его.
         // Система не сможет установить защищенное соединение и переключится на обычный DNS.
-        if (protocol == 6) {
+      if (protocol == 6 || protocol == 17) { // Проверяем и TCP, и UDP
             val destPort = packet.getShort(ipHeaderLength + 2).toInt() and 0xFFFF
             if (destPort == 853) {
                 android.util.Log.d("DNS_FILTER", "Заблокирован Private DNS (DoT) на $destIp")
+                
+                // Считаем статистику
+                val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
+                val count = prefs.getInt("dot_blocked_count", 0) + 1
+                prefs.edit().putInt("dot_blocked_count", count).apply()
+                
+                // Отправляем сигнал
+                val intent = Intent("UPDATE_DOT_STATS").apply {
+                    putExtra("count", count)
+                    setPackage(packageName) 
+                }
+                sendBroadcast(intent)
+                
                 return 
             }
-            // Остальной TCP-трафик мы сейчас не обрабатываем (пропускаем)
-            return 
+            // Если это TCP, но не 853 порт — мы его не обрабатываем (пропускаем)
+            if (protocol == 6) return 
         }
 
         // 2. ОБРАБАТЫВАЕМ ОБЫЧНЫЙ DNS (UDP)
