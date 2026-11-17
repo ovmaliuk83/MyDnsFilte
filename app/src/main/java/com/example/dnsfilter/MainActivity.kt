@@ -1,7 +1,10 @@
 package com.example.dnsfilter
 
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -14,6 +17,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -33,6 +37,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnStart: Button
     private lateinit var btnStop: Button
 
+    // Приемник сигналов от VPN-сервиса для обновления счетчика
+    private val statsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "UPDATE_DOT_STATS") {
+                val count = intent.getIntExtra("count", 0)
+                findViewById<TextView>(R.id.tvStats).text = "Блокировка системного DNS (DoT): $count"
+            }
+        }
+    }
+
     private val vpnLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -50,13 +64,17 @@ class MainActivity : AppCompatActivity() {
         btnStart = findViewById(R.id.btnStart)
         btnStop = findViewById(R.id.btnStop)
         val searchBar = findViewById<EditText>(R.id.searchBar)
+        val tvStats = findViewById<TextView>(R.id.tvStats)
+
+        // Показываем сохраненный счетчик при запуске
+        val prefsStats = getSharedPreferences("dns_prefs", MODE_PRIVATE)
+        tvStats.text = "Блокировка системного DNS (DoT): ${prefsStats.getInt("dot_blocked_count", 0)}"
 
         val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
         val savedExcluded = prefs.getStringSet("excluded_apps", emptySet())?.toMutableSet() ?: mutableSetOf()
 
         val pm = packageManager
-        
-        // Загружаем приложения, у которых есть доступ в интернет (включая Chrome)
+        // Ищем приложения с доступом в интернет (включая Chrome)
         allAppsList = pm.getInstalledApplications(0)
             .filter { pm.checkPermission(android.Manifest.permission.INTERNET, it.packageName) == PackageManager.PERMISSION_GRANTED }
             .map {
@@ -82,7 +100,7 @@ class MainActivity : AppCompatActivity() {
         }
         recyclerView.adapter = adapter
 
-        // Поиск по списку
+        // Логика поиска
         searchBar.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -111,6 +129,15 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Фильтр остановлен", Toast.LENGTH_SHORT).show()
             updateButtonStates(false)
         }
+
+        // Регистрируем приемник для счетчика (с поддержкой Android 13+)
+        val filter = IntentFilter("UPDATE_DOT_STATS")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(statsReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(statsReceiver, filter)
+        }
     }
 
     private fun updateButtonStates(isRunning: Boolean) {
@@ -124,6 +151,15 @@ class MainActivity : AppCompatActivity() {
             btnStart.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#4CAF50"))
             btnStop.isEnabled = false
             btnStop.backgroundTintList = ColorStateList.valueOf(Color.GRAY)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            unregisterReceiver(statsReceiver)
+        } catch (e: Exception) {
+            // Игнорируем
         }
     }
 }
