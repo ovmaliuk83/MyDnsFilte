@@ -1,15 +1,16 @@
 package com.example.dnsfilter
 
+import android.Manifest
 import android.app.Activity
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
@@ -21,41 +22,52 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import java.util.concurrent.Executors
 
 data class AppItem(
     val name: String,
     val packageName: String,
     var isExcluded: Boolean
-)
+) {
+    // Считаем один раз, а не при каждом символе поиска
+    val searchKey: String = "$name $packageName".lowercase()
+}
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var allAppsList: List<AppItem>
     private lateinit var adapter: AppsAdapter
     private lateinit var btnStart: Button
     private lateinit var btnStop: Button
+    private lateinit var tvStats: TextView
 
-    // Приемник сигналов от VPN-сервиса для обновления счетчика
-    private val statsReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "UPDATE_DOT_STATS") {
-                val count = intent.getIntExtra("count", 0)
-                findViewById<TextView>(R.id.tvStats).text = "Блокировка системного DNS (DoT): $count"
-            }
+    private var allApps: List<AppItem> = emptyList()
+    private var currentQuery = ""
+    private val excluded = mutableSetOf<String>()
+    private var shownRunningState: Boolean? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val ioExecutor = Executors.newSingleThreadExecutor()
+
+    // Раз в секунду обновляем счётчики и состояние кнопок
+    private val ticker = object : Runnable {
+        override fun run() {
+            refreshUi()
+            handler.postDelayed(this, 1000)
         }
     }
 
     private val vpnLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            startService(Intent(this, LocalDnsVpnService::class.java))
-            Toast.makeText(this, "Фильтр запущен", Toast.LENGTH_SHORT).show()
-            updateButtonStates(true)
-        }
+        if (result.resultCode == Activity.RESULT_OK) startFilter()
     }
+
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* без уведомления сервис всё равно работает */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,110 +75,124 @@ class MainActivity : AppCompatActivity() {
 
         btnStart = findViewById(R.id.btnStart)
         btnStop = findViewById(R.id.btnStop)
+        tvStats = findViewById(R.id.tvStats)
         val searchBar = findViewById<EditText>(R.id.searchBar)
-        val tvStats = findViewById<TextView>(R.id.tvStats)
+        val recyclerView = findViewById<RecyclerView>(R.id.recyclerApps)
 
-        // Показываем сохраненный счетчик при запуске
-        //val prefsStats = getSharedPreferences("dns_prefs", MODE_PRIVATE)
-        //tvStats.text = "Блокировка системного DNS (DoT): ${prefsStats.getInt("dot_blocked_count", 0)}"
+        FilterStats.init(this)
+
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
-        val savedExcluded = prefs.getStringSet("excluded_apps", emptySet())?.toMutableSet() ?: mutableSetOf()
+        excluded.addAll(prefs.getStringSet("excluded_apps", emptySet()) ?: emptySet())
 
-        val pm = packageManager
-        // Ищем приложения с доступом в интернет (включая Chrome)
-        allAppsList = pm.getInstalledApplications(0)
-            .filter { pm.checkPermission(android.Manifest.permission.INTERNET, it.packageName) == PackageManager.PERMISSION_GRANTED }
-            .map {
-                AppItem(
-                    name = it.loadLabel(pm).toString(),
-                    packageName = it.packageName,
-                    isExcluded = savedExcluded.contains(it.packageName)
-                )
+        adapter = AppsAdapter(emptyList()) { item, isChecked ->
+            if (isChecked) excluded.add(item.packageName) else excluded.remove(item.packageName)
+            prefs.edit().putStringSet("excluded_apps", HashSet(excluded)).apply()
+            if (LocalDnsVpnService.isRunning) {
+                Toast.makeText(this, "Перезапустите фильтр для применения", Toast.LENGTH_SHORT).show()
             }
-            .sortedBy { it.name.lowercase() }
-
-        val recyclerView = findViewById<RecyclerView>(R.id.recyclerApps)
-        recyclerView.layoutManager = LinearLayoutManager(this)
-        
-        adapter = AppsAdapter(allAppsList) { appItem, isChecked ->
-            if (isChecked) {
-                savedExcluded.add(appItem.packageName)
-            } else {
-                savedExcluded.remove(appItem.packageName)
-            }
-            prefs.edit().putStringSet("excluded_apps", savedExcluded).apply()
-            Toast.makeText(this, "Перезапустите фильтр для применения", Toast.LENGTH_SHORT).show()
         }
+        recyclerView.layoutManager = LinearLayoutManager(this)
         recyclerView.adapter = adapter
 
-        // Логика поиска
         searchBar.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                val query = s.toString().lowercase()
-                val filtered = allAppsList.filter { 
-                    it.name.lowercase().contains(query) || it.packageName.lowercase().contains(query) 
-                }
-                adapter.updateList(filtered)
+                currentQuery = s.toString().trim().lowercase()
+                adapter.updateList(filterApps())
             }
             override fun afterTextChanged(s: Editable?) {}
         })
 
         btnStart.setOnClickListener {
             val intent = VpnService.prepare(this)
-            if (intent != null) {
-                vpnLauncher.launch(intent)
-            } else {
-                startService(Intent(this, LocalDnsVpnService::class.java))
-                Toast.makeText(this, "Фильтр запущен", Toast.LENGTH_SHORT).show()
-                updateButtonStates(true)
-            }
+            if (intent != null) vpnLauncher.launch(intent) else startFilter()
         }
 
         btnStop.setOnClickListener {
-            startService(Intent(this, LocalDnsVpnService::class.java).apply { action = "STOP" })
-            Toast.makeText(this, "Фильтр остановлен", Toast.LENGTH_SHORT).show()
-            updateButtonStates(false)
+            if (LocalDnsVpnService.isRunning) {
+                startService(
+                    Intent(this, LocalDnsVpnService::class.java)
+                        .setAction(LocalDnsVpnService.ACTION_STOP)
+                )
+                Toast.makeText(this, "Фильтр остановлен", Toast.LENGTH_SHORT).show()
+            }
         }
 
-        // Регистрируем приемник для счетчика (с поддержкой Android 13+)
-        val filter = IntentFilter("UPDATE_DOT_STATS")
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(statsReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(statsReceiver, filter)
+        loadApps()
+    }
+
+    private fun startFilter() {
+        ContextCompat.startForegroundService(this, Intent(this, LocalDnsVpnService::class.java))
+        Toast.makeText(this, "Фильтр запущен", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Список приложений собираем в фоне: loadLabel() для сотен приложений тормозит UI. */
+    private fun loadApps() {
+        val excludedSnapshot = HashSet(excluded)
+        ioExecutor.execute {
+            val pm = packageManager
+            val apps = pm.getInstalledApplications(0)
+                .filter {
+                    it.packageName != packageName &&
+                        pm.checkPermission(Manifest.permission.INTERNET, it.packageName) ==
+                        PackageManager.PERMISSION_GRANTED
+                }
+                .map {
+                    AppItem(
+                        name = it.loadLabel(pm).toString(),
+                        packageName = it.packageName,
+                        isExcluded = it.packageName in excludedSnapshot
+                    )
+                }
+                .sortedBy { it.name.lowercase() }
+
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                allApps = apps
+                adapter.updateList(filterApps())
+            }
         }
     }
 
-    private fun updateButtonStates(isRunning: Boolean) {
-        if (isRunning) {
-            btnStart.isEnabled = false
-            btnStart.backgroundTintList = ColorStateList.valueOf(Color.GRAY)
-            btnStop.isEnabled = true
-            btnStop.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#4CAF50"))
-        } else {
-            btnStart.isEnabled = true
-            btnStart.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#4CAF50"))
-            btnStop.isEnabled = false
-            btnStop.backgroundTintList = ColorStateList.valueOf(Color.GRAY)
+    private fun filterApps(): List<AppItem> =
+        if (currentQuery.isEmpty()) allApps else allApps.filter { it.searchKey.contains(currentQuery) }
+
+    private fun refreshUi() {
+        tvStats.text = "Заблокировано рекламных запросов: ${FilterStats.adsBlocked.get()}\n" +
+            "Блокировка системного DNS (DoT): ${FilterStats.dotBlocked.get()}"
+
+        val running = LocalDnsVpnService.isRunning
+        if (running != shownRunningState) {
+            shownRunningState = running
+            val green = ColorStateList.valueOf(Color.parseColor("#4CAF50"))
+            val gray = ColorStateList.valueOf(Color.GRAY)
+            btnStart.isEnabled = !running
+            btnStart.backgroundTintList = if (running) gray else green
+            btnStop.isEnabled = running
+            btnStop.backgroundTintList = if (running) green else gray
         }
     }
- override fun onResume() {
+
+    override fun onResume() {
         super.onResume()
-        // Каждый раз при возврате в приложение обновляем счетчик из памяти
-        val prefsStats = getSharedPreferences("dns_prefs", MODE_PRIVATE)
-        val currentCount = prefsStats.getInt("dot_blocked_count", 0)
-        findViewById<TextView>(R.id.tvStats).text = "Блокировка системного DNS (DoT): $currentCount"
+        handler.post(ticker)
     }
+
+    override fun onPause() {
+        handler.removeCallbacks(ticker)
+        FilterStats.save(this)
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        ioExecutor.shutdown()
         super.onDestroy()
-        try {
-            unregisterReceiver(statsReceiver)
-        } catch (e: Exception) {
-            // Игнорируем
-        }
     }
 }
 
