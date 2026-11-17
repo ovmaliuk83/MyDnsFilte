@@ -17,7 +17,7 @@ class LocalDnsVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var isRunning = false
 
-    // Потокобезопасный набор для хранения большой базы рекламных доменов
+    // Потокобезопасный набор для хранения базы доменов
     private val blockedDomains = ConcurrentHashMap.newKeySet<String>()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -50,9 +50,10 @@ class LocalDnsVpnService : VpnService() {
             e.printStackTrace()
         }
 
-        // Вывод в лог для проверки
+        // Вывод в лог для проверки (adb logcat -s DNS_FILTER)
         android.util.Log.d("DNS_FILTER", "Загружено доменов: ${blockedDomains.size}")
 
+        // Резервные домены
         blockedDomains.add("an.yandex.ru")
         blockedDomains.add("mc.yandex.ru")
         blockedDomains.add("googleads.g.doubleclick.net")
@@ -61,16 +62,13 @@ class LocalDnsVpnService : VpnService() {
     }
 
     private fun startVpn() {
+        // ВНИМАНИЕ: Настройки IPv6 убраны! 
+        // Это заставит телефон использовать только IPv4, чтобы фильтр видел весь трафик.
         val builder = Builder()
             .setSession("MyLocalDnsFilter")
-            // Настройки IPv4
             .addAddress("10.0.0.2", 32)
             .addDnsServer("10.0.0.1")
             .addRoute("10.0.0.1", 32)
-            // Настройки IPv6 (перехватываем и его тоже)
-            .addAddress("fd00::1", 128)
-            .addDnsServer("fd00::2")
-            .addRoute("fd00::2", 128)
 
         val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
         val excludedPackages = prefs.getStringSet("excluded_apps", emptySet()) ?: emptySet()
