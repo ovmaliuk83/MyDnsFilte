@@ -304,9 +304,9 @@ class LocalDnsVpnService : VpnService() {
     private fun buildBlockedResponse(query: Message): ByteArray {
         val q = query.question
         val response = Message(query.header.id)
-        response.header.setFlag(Flags.QR)
-        response.header.setFlag(Flags.RA)
-        if (query.header.getFlag(Flags.RD)) response.header.setFlag(Flags.RD)
+        response.header.setFlag(Flags.QR.toInt())
+        response.header.setFlag(Flags.RA.toInt())
+        if (query.header.getFlag(Flags.RD.toInt())) response.header.setFlag(Flags.RD.toInt())
         response.addRecord(q, Section.QUESTION)
 
         when (q.type) {
@@ -322,10 +322,10 @@ class LocalDnsVpnService : VpnService() {
         return response.toWire()
     }
 
-    private fun buildServFail(query: Message): ByteArray {
+     private fun buildServFail(query: Message): ByteArray {
         val response = Message(query.header.id)
-        response.header.setFlag(Flags.QR)
-        response.header.setFlag(Flags.RA)
+        response.header.setFlag(Flags.QR.toInt())
+        response.header.setFlag(Flags.RA.toInt())
         response.header.rcode = Rcode.SERVFAIL
         query.question?.let { response.addRecord(it, Section.QUESTION) }
         return response.toWire()
