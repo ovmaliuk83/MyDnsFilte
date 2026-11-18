@@ -57,8 +57,11 @@ class LocalDnsVpnService : VpnService() {
             "dns.adguard.com", "chrome.cloudflare-dns.com"
         )
 
-        /** Домены, добавленные пользователем вручную (экран «Последние запросы»). */
+        /** Домены, добавленные пользователем вручную. */
         val customBlocked: MutableSet<String> = ConcurrentHashMap.newKeySet<String>()
+
+        /** Домены, разрешённые пользователем: главнее любых блокировок. */
+        val allowedDomains: MutableSet<String> = ConcurrentHashMap.newKeySet<String>()
 
         @Volatile
         var isRunning = false
@@ -135,9 +138,7 @@ class LocalDnsVpnService : VpnService() {
         // иначе первые запросы пройдут без фильтрации.
         if (blocked.isEmpty()) blocked = loadBlocklist()
 
-        getSharedPreferences("dns_prefs", MODE_PRIVATE)
-            .getStringSet("custom_blocked", emptySet())
-            ?.let { customBlocked.addAll(it) }
+        RuleStore.load(this) // личные блокировки и разрешения
 
         val iface = buildTunnel()
         if (iface == null || !isRunning) {
@@ -217,10 +218,12 @@ class LocalDnsVpnService : VpnService() {
     private fun isBlocked(domain: String): Boolean {
         val set = blocked
         var d = domain
+        var hit = false
         while (true) {
-            if (d in set || d in customBlocked) return true
+            if (d in allowedDomains) return false // разрешение главнее всего
+            if (d in set || d in customBlocked) hit = true
             val dot = d.indexOf('.')
-            if (dot < 0 || dot == d.length - 1) return false
+            if (dot < 0 || dot == d.length - 1) return hit
             d = d.substring(dot + 1) // ads.example.com → example.com
         }
     }
@@ -418,34 +421,4 @@ class LocalDnsVpnService : VpnService() {
         b.putInt(24, 0)               // seq
         b.putInt(28, clientSeq + 1)   // ack
         out[32] = (5 shl 4).toByte()  // длина заголовка 20 байт
-        out[33] = 0x14                // RST + ACK
-
-        // TCP-контрольная сумма с псевдозаголовком
-        val pseudo = ByteArray(12 + 20)
-        System.arraycopy(out, 12, pseudo, 0, 8)
-        pseudo[9] = 6
-        pseudo[11] = 20
-        System.arraycopy(out, 20, pseudo, 12, 20)
-        b.putShort(36, checksum(pseudo, 0, pseudo.size))
-        return out
-    }
-
-    private fun u16(buf: ByteArray, offset: Int): Int =
-        ((buf[offset].toInt() and 0xFF) shl 8) or (buf[offset + 1].toInt() and 0xFF)
-
-    private fun checksum(buf: ByteArray, offset: Int, length: Int): Short {
-        var sum = 0
-        var i = offset
-        val end = offset + length
-        while (i < end) {
-            val hi = buf[i].toInt() and 0xFF
-            val lo = if (i + 1 < end) buf[i + 1].toInt() and 0xFF else 0
-            sum += (hi shl 8) or lo
-            i += 2
-        }
-        while ((sum ushr 16) != 0) {
-            sum = (sum and 0xFFFF) + (sum ushr 16)
-        }
-        return sum.inv().toShort()
-    }
-}
+        out[33] = 0x14                // RST
