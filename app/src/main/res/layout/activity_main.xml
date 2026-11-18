@@ -29,14 +29,21 @@
             android:backgroundTint="#9E9E9E"
             android:enabled="false" />
     </LinearLayout>
-    
+
     <Button
-            android:id="@+id/btnQueries"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="Включить запись запросов" />
-    <!-- Счетчик заблокированных DoT запросов -->
+        android:id="@+id/btnQueries"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Включить запись запросов" />
+
+    <Button
+        android:id="@+id/btnRules"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Мои правила (отмена блокировок)" />
+
+    <!-- Счётчики -->
     <TextView
         android:id="@+id/tvStats"
         android:layout_width="match_parent"
@@ -72,6 +79,7 @@
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recyclerApps"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="0dp"
+        android:layout_weight="1" />
 
 </LinearLayout>
