@@ -25,7 +25,6 @@ import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
-import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -269,22 +268,22 @@ class LocalDnsVpnService : VpnService() {
         val isSyn = (flags and 0x02) != 0 && (flags and 0x10) == 0
         if (!isSyn) return
 
-        if (u16(packet, ihl + 2) == 853) {
+        if (PacketUtils.u16(packet, ihl + 2) == 853) {
             FilterStats.dotBlocked.incrementAndGet()
             Log.d(TAG, "Заблокирован DoT")
         }
-        writePacket(output, buildTcpReset(packet, ihl))
+        writePacket(output, PacketUtils.buildTcpReset(packet, ihl))
     }
 
     private fun handleUdp(packet: ByteArray, ihl: Int, output: FileOutputStream) {
-        val destPort = u16(packet, ihl + 2)
+        val destPort = PacketUtils.u16(packet, ihl + 2)
         if (destPort == 853) { // DNS-over-QUIC: просто отбрасываем
             FilterStats.dotBlocked.incrementAndGet()
             return
         }
         if (destPort != 53) return
 
-        val payloadLen = minOf(u16(packet, ihl + 4) - 8, packet.size - ihl - 8)
+        val payloadLen = minOf(PacketUtils.u16(packet, ihl + 4) - 8, packet.size - ihl - 8)
         if (payloadLen <= 0) return
         val dns = packet.copyOfRange(ihl + 8, ihl + 8 + payloadLen)
 
@@ -311,7 +310,7 @@ class LocalDnsVpnService : VpnService() {
             } else {
                 forwardToUpstream(dns) ?: buildServFail(query)
             }
-            writePacket(output, buildUdpResponse(requestPacket, ihl, responseBytes))
+            writePacket(output, PacketUtils.buildUdpResponse(requestPacket, ihl, responseBytes))
         } catch (e: Exception) {
             Log.w(TAG, "Ошибка обработки DNS-запроса: ${e.message}")
         }
@@ -371,8 +370,6 @@ class LocalDnsVpnService : VpnService() {
         return null
     }
 
-    // ───────────────────────── сборка IP-пакетов ─────────────────────────
-
     private fun writePacket(output: FileOutputStream, data: ByteArray) {
         try {
             synchronized(writeLock) { output.write(data) }
@@ -380,45 +377,5 @@ class LocalDnsVpnService : VpnService() {
             if (isRunning) Log.w(TAG, "Ошибка записи в TUN: ${e.message}")
         }
     }
-
-    private fun buildUdpResponse(req: ByteArray, ihl: Int, dns: ByteArray): ByteArray {
-        val udpLen = 8 + dns.size
-        val total = 20 + udpLen
-        val out = ByteArray(total)
-        val b = ByteBuffer.wrap(out)
-
-        out[0] = 0x45
-        out[8] = 64
-        out[9] = 17
-        b.putShort(2, total.toShort())
-        System.arraycopy(req, 16, out, 12, 4) // src = бывший dst
-        System.arraycopy(req, 12, out, 16, 4) // dst = бывший src
-        b.putShort(10, checksum(out, 0, 20))
-
-        System.arraycopy(req, ihl + 2, out, 20, 2) // порт источника = бывший порт назначения
-        System.arraycopy(req, ihl, out, 22, 2)
-        b.putShort(24, udpLen.toShort())
-        // UDP-контрольная сумма для IPv4 может быть 0
-        System.arraycopy(dns, 0, out, 28, dns.size)
-        return out
-    }
-
-    private fun buildTcpReset(req: ByteArray, ihl: Int): ByteArray {
-        val out = ByteArray(40)
-        val b = ByteBuffer.wrap(out)
-
-        out[0] = 0x45
-        out[8] = 64
-        out[9] = 6
-        b.putShort(2, 40)
-        System.arraycopy(req, 16, out, 12, 4)
-        System.arraycopy(req, 12, out, 16, 4)
-        b.putShort(10, checksum(out, 0, 20))
-
-        System.arraycopy(req, ihl + 2, out, 20, 2)
-        System.arraycopy(req, ihl, out, 22, 2)
-        val clientSeq = ByteBuffer.wrap(req).getInt(ihl + 4)
-        b.putInt(24, 0)               // seq
-        b.putInt(28, clientSeq + 1)   // ack
-        out[32] = (5 shl 4).toByte()  // длина заголовка 20 байт
-        out[33] = 0x14                // RST
+}
+// КОНЕЦ ФАЙЛА
