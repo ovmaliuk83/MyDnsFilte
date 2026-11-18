@@ -26,6 +26,7 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.nio.ByteBuffer
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -55,6 +56,9 @@ class LocalDnsVpnService : VpnService() {
             "dns.google", "mozilla.cloudflare-dns.com",
             "dns.adguard.com", "chrome.cloudflare-dns.com"
         )
+
+        /** Домены, добавленные пользователем вручную (экран «Последние запросы»). */
+        val customBlocked: MutableSet<String> = ConcurrentHashMap.newKeySet<String>()
 
         @Volatile
         var isRunning = false
@@ -123,21 +127,27 @@ class LocalDnsVpnService : VpnService() {
         FilterStats.init(this)
         workers = Executors.newFixedThreadPool(4)
 
-        Thread({
-            // Сначала грузим список, и только потом поднимаем туннель:
-            // иначе первые запросы пройдут без фильтрации.
-            if (blocked.isEmpty()) blocked = loadBlocklist()
+        Thread({ runFilter() }, "dns-filter-loop").apply { isDaemon = true }.start()
+    }
 
-            val iface = buildTunnel()
-            if (iface == null || !isRunning) {
-                Log.e(TAG, "Не удалось создать VPN-интерфейс")
-                iface?.close()
-                stopVpn()
-                return@Thread
-            }
-            vpnInterface = iface
-            runPacketLoop(iface)
-        }, "dns-filter-loop").apply { isDaemon = true }.start()
+    private fun runFilter() {
+        // Сначала грузим списки, и только потом поднимаем туннель:
+        // иначе первые запросы пройдут без фильтрации.
+        if (blocked.isEmpty()) blocked = loadBlocklist()
+
+        getSharedPreferences("dns_prefs", MODE_PRIVATE)
+            .getStringSet("custom_blocked", emptySet())
+            ?.let { customBlocked.addAll(it) }
+
+        val iface = buildTunnel()
+        if (iface == null || !isRunning) {
+            Log.e(TAG, "Не удалось создать VPN-интерфейс")
+            iface?.close()
+            stopVpn()
+            return
+        }
+        vpnInterface = iface
+        runPacketLoop(iface)
     }
 
     private fun buildTunnel(): ParcelFileDescriptor? {
@@ -208,7 +218,7 @@ class LocalDnsVpnService : VpnService() {
         val set = blocked
         var d = domain
         while (true) {
-            if (d in set) return true
+            if (d in set || d in customBlocked) return true
             val dot = d.indexOf('.')
             if (dot < 0 || dot == d.length - 1) return false
             d = d.substring(dot + 1) // ads.example.com → example.com
@@ -289,7 +299,10 @@ class LocalDnsVpnService : VpnService() {
             val question = query.question ?: return
             val domain = question.name.toString(true).lowercase()
 
-            val responseBytes = if (isBlocked(domain)) {
+            val isAd = isBlocked(domain)
+            QueryLog.record(domain, isAd) // пишет только если пользователь включил запись
+
+            val responseBytes = if (isAd) {
                 FilterStats.adsBlocked.incrementAndGet()
                 buildBlockedResponse(query)
             } else {
@@ -322,7 +335,7 @@ class LocalDnsVpnService : VpnService() {
         return response.toWire()
     }
 
-     private fun buildServFail(query: Message): ByteArray {
+    private fun buildServFail(query: Message): ByteArray {
         val response = Message(query.header.id)
         response.header.setFlag(Flags.QR.toInt())
         response.header.setFlag(Flags.RA.toInt())
