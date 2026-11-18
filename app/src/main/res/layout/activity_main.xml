@@ -29,7 +29,13 @@
             android:backgroundTint="#9E9E9E"
             android:enabled="false" />
     </LinearLayout>
-
+    
+    <Button
+            android:id="@+id/btnQueries"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Включить запись запросов" />
     <!-- Счетчик заблокированных DoT запросов -->
     <TextView
         android:id="@+id/tvStats"
