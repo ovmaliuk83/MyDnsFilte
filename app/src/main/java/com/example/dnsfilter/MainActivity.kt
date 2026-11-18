@@ -21,6 +21,7 @@ import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -41,6 +42,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: AppsAdapter
     private lateinit var btnStart: Button
     private lateinit var btnStop: Button
+    private lateinit var btnQueries: Button
     private lateinit var tvStats: TextView
 
     private var allApps: List<AppItem> = emptyList()
@@ -76,6 +78,7 @@ class MainActivity : AppCompatActivity() {
         btnStart = findViewById(R.id.btnStart)
         btnStop = findViewById(R.id.btnStop)
         tvStats = findViewById(R.id.tvStats)
+        btnQueries = findViewById(R.id.btnQueries)
         val searchBar = findViewById<EditText>(R.id.searchBar)
         val recyclerView = findViewById<RecyclerView>(R.id.recyclerApps)
 
@@ -124,6 +127,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        btnQueries.setOnClickListener { onQueriesClicked() }
+
         loadApps()
     }
 
@@ -167,6 +172,9 @@ class MainActivity : AppCompatActivity() {
         tvStats.text = "Заблокировано рекламных запросов: ${FilterStats.adsBlocked.get()}\n" +
             "Блокировка системного DNS (DoT): ${FilterStats.dotBlocked.get()}"
 
+        btnQueries.text =
+            if (QueryLog.enabled) "Последние запросы (запись идёт)" else "Включить запись запросов"
+
         val running = LocalDnsVpnService.isRunning
         if (running != shownRunningState) {
             shownRunningState = running
@@ -178,6 +186,80 @@ class MainActivity : AppCompatActivity() {
             btnStop.backgroundTintList = if (running) green else gray
         }
     }
+
+    // ───────────────────────── последние запросы ─────────────────────────
+
+    private fun onQueriesClicked() {
+        if (!QueryLog.enabled) {
+            QueryLog.enabled = true
+            Toast.makeText(
+                this,
+                "Запись включена. Откройте сайт в браузере и вернитесь сюда",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        showQueriesDialog()
+    }
+
+    private fun showQueriesDialog() {
+        val list = QueryLog.snapshot()
+        if (list.isEmpty()) {
+            Toast.makeText(
+                this,
+                "Пока пусто. Фильтр запущен? Защищённый DNS в Chrome выключен?",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        val labels = Array<CharSequence>(list.size) { i ->
+            val (domain, blocked) = list[i]
+            (if (blocked) "🚫 " else "✅ ") + domain
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Запросы: новые сверху")
+            .setItems(labels) { _, which ->
+                val (domain, blocked) = list[which]
+                if (blocked) {
+                    Toast.makeText(this, "Уже заблокирован", Toast.LENGTH_SHORT).show()
+                } else {
+                    confirmBlock(domain)
+                }
+            }
+            .setPositiveButton("Закрыть", null)
+            .setNegativeButton("Остановить и очистить") { _, _ ->
+                QueryLog.enabled = false
+                QueryLog.clear()
+            }
+            .show()
+    }
+
+    private fun confirmBlock(domain: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Заблокировать?")
+            .setMessage(
+                "$domain и все его поддомены.\n\n" +
+                    "Не блокируйте общие домены (например, yandex.ru или google.com): " +
+                    "перестанут работать почта, карты и поиск."
+            )
+            .setPositiveButton("Заблокировать") { _, _ ->
+                val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
+                val set = HashSet(prefs.getStringSet("custom_blocked", emptySet()) ?: emptySet())
+                set.add(domain)
+                prefs.edit().putStringSet("custom_blocked", set).apply()
+                LocalDnsVpnService.customBlocked.add(domain)
+                Toast.makeText(
+                    this,
+                    "Добавлено. Перезапустите браузер: он кэширует адреса",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    // ───────────────────────── жизненный цикл ─────────────────────────
 
     override fun onResume() {
         super.onResume()
