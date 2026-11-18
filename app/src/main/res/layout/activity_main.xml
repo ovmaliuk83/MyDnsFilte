@@ -5,81 +5,54 @@
     android:orientation="vertical"
     android:padding="16dp">
 
-    <!-- Кнопки Включения/Выключения -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:text="Добавьте домен вручную или нажмите на правило в списке, чтобы удалить его. «Разрешить» главнее любых блокировок и действует на поддомены." />
+
+    <EditText
+        android:id="@+id/etDomain"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="example.com"
+        android:inputType="textUri"
+        android:singleLine="true" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp"
         android:orientation="horizontal">
 
         <Button
-            android:id="@+id/btnStart"
+            android:id="@+id/btnAddBlock"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:layout_marginEnd="8dp"
-            android:text="Включить фильтр"
-            android:backgroundTint="#4CAF50" />
+            android:text="Блокировать" />
 
         <Button
-            android:id="@+id/btnStop"
+            android:id="@+id/btnAddAllow"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Выключить"
-            android:backgroundTint="#9E9E9E"
-            android:enabled="false" />
+            android:text="Разрешить" />
     </LinearLayout>
 
-    <Button
-        android:id="@+id/btnQueries"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Включить запись запросов" />
-
-    <Button
-        android:id="@+id/btnRules"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Мои правила (отмена блокировок)" />
-
-    <!-- Счётчики -->
     <TextView
-        android:id="@+id/tvStats"
+        android:id="@+id/tvEmpty"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:layout_marginBottom="12dp"
-        android:text="Блокировка системного DNS (DoT): 0"
-        android:textAlignment="center"
-        android:textStyle="bold"
-        android:textColor="#FF5722"
-        android:textSize="16sp" />
+        android:padding="16dp"
+        android:text="Своих правил пока нет"
+        android:textAlignment="center" />
 
-    <TextView
+    <ListView
+        android:id="@+id/listRules"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
-        android:text="Отметьте программы-исключения (их трафик пойдет мимо фильтра):"
-        android:textStyle="bold" />
-
-    <!-- Поле поиска -->
-    <EditText
-        android:id="@+id/searchBar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Поиск по названию..."
-        android:inputType="text"
-        android:padding="12dp"
-        android:layout_marginBottom="8dp"
-        android:background="@android:drawable/editbox_background"
-        android:singleLine="true" />
-
-    <!-- Список программ -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/recyclerApps"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_height="match_parent" />
 
 </LinearLayout>
