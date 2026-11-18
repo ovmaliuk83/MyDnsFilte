@@ -48,7 +48,13 @@ jobs:
           test "$COUNT" -gt 10000
 
       - name: Build Debug APK
-        run: gradle assembleDebug --stacktrace
+        run: |
+          set -o pipefail
+          gradle assembleDebug --console=plain 2>&1 | tee build.log || {
+            echo "=== ОШИБКИ КОМПИЛЯЦИИ ==="
+            grep -E '^e: ' build.log || true
+            exit 1
+          }
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
