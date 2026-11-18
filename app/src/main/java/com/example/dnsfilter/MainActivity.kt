@@ -83,6 +83,7 @@ class MainActivity : AppCompatActivity() {
         val recyclerView = findViewById<RecyclerView>(R.id.recyclerApps)
 
         FilterStats.init(this)
+        RuleStore.load(this) // подтягиваем личные правила с диска в память
 
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -128,6 +129,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnQueries.setOnClickListener { onQueriesClicked() }
+
+        findViewById<Button>(R.id.btnRules).setOnClickListener {
+            startActivity(Intent(this, RulesActivity::class.java))
+        }
 
         loadApps()
     }
@@ -218,14 +223,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         AlertDialog.Builder(this)
-            .setTitle("Запросы: новые сверху")
+            .setTitle("Запросы: нажмите, чтобы изменить")
             .setItems(labels) { _, which ->
                 val (domain, blocked) = list[which]
-                if (blocked) {
-                    Toast.makeText(this, "Уже заблокирован", Toast.LENGTH_SHORT).show()
-                } else {
-                    confirmBlock(domain)
-                }
+                if (blocked) confirmAllow(domain) else confirmBlock(domain)
             }
             .setPositiveButton("Закрыть", null)
             .setNegativeButton("Остановить и очистить") { _, _ ->
@@ -238,20 +239,39 @@ class MainActivity : AppCompatActivity() {
     private fun confirmBlock(domain: String) {
         AlertDialog.Builder(this)
             .setTitle("Заблокировать?")
-            .setMessage(
-                "$domain и все его поддомены.\n\n" +
-                    "Не блокируйте общие домены (например, yandex.ru или google.com): " +
-                    "перестанут работать почта, карты и поиск."
-            )
+            .setMessage("$domain и все его поддомены.")
             .setPositiveButton("Заблокировать") { _, _ ->
-                val prefs = getSharedPreferences("dns_prefs", MODE_PRIVATE)
-                val set = HashSet(prefs.getStringSet("custom_blocked", emptySet()) ?: emptySet())
-                set.add(domain)
-                prefs.edit().putStringSet("custom_blocked", set).apply()
-                LocalDnsVpnService.customBlocked.add(domain)
+                if (RuleStore.addBlocked(this, domain)) {
+                    Toast.makeText(
+                        this,
+                        "Добавлено. Перезапустите браузер: он кэширует адреса",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        this,
+                        "Домен защищён: его блокировка сломает почту, карты или поиск",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun confirmAllow(domain: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Разрешить домен?")
+            .setMessage(
+                "$domain и все его поддомены перестанут блокироваться, " +
+                    "даже если они есть в списках.\n\n" +
+                    "Отменить можно в разделе «Мои правила»."
+            )
+            .setPositiveButton("Разрешить") { _, _ ->
+                RuleStore.addAllowed(this, domain)
                 Toast.makeText(
                     this,
-                    "Добавлено. Перезапустите браузер: он кэширует адреса",
+                    "Разрешено. Перезапустите браузер: он кэширует адреса",
                     Toast.LENGTH_LONG
                 ).show()
             }
